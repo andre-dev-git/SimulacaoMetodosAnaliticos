@@ -10,6 +10,7 @@ class QueueSimulator {
     private $time = 0;
     private $queue = [];
     private $stateDurations = [];
+    private $losses = 0;
 
     public function __construct($servers, $capacity, $arrivalRange, $serviceRange, $randomNumbers) {
         $this->servers = $servers;
@@ -55,6 +56,8 @@ class QueueSimulator {
                         $serviceTimes[] = $this->time + $this->getTime($this->serviceRange);
                         $serversBusy++;
                     }
+                } else {
+                    $this->losses++;
                 }
                 if ($this->randIndex < count($this->randomNumbers)) {
                     $arrivalTime = $this->time + $this->getTime($this->arrivalRange);
@@ -71,28 +74,57 @@ class QueueSimulator {
         }
     }
 
-    public function statePercentages() {
+    public function stateReport() {
         $totalTime = array_sum($this->stateDurations);
         $percentages = [];
         foreach ($this->stateDurations as $state => $duration) {
-            $percentages[$state] = round(($duration / $totalTime) * 100, 2);
+            $percentages[$state] = [
+                'time' => round($duration, 4),
+                'percentage' => round(($duration / $totalTime) * 100, 2)
+            ];
         }
         ksort($percentages);
-        return $percentages;
+
+        return [
+            'states' => $percentages,
+            'losses' => $this->losses,
+            'total_time' => round($totalTime, 4)
+        ];
     }
 }
 
-$randomNumbers = [0.8, 0.7, 0.8, 0.6, 0.2, 0.5];
+$options = getopt("", ["servers:", "capacity:", "arrival_min:", "arrival_max:", "service_min:", "service_max:", "random:"]);
 
-$simulatorCafe = new QueueSimulator(1, 5, [2.0, 5.0], [3.0, 5], $randomNumbers);
-$simulatorCafe->simulate();
-echo "Fila G/G/1/5 - Cafeteria A: \n";
-print_r($simulatorCafe->statePercentages());
+if (!isset($options['servers'], $options['capacity'], $options['arrival_min'], $options['arrival_max'], $options['service_min'], $options['service_max'])) {
+    exit("Usage: php simulator.php --servers=NUM --capacity=NUM --arrival_min=NUM --arrival_max=NUM --service_min=NUM --service_max=NUM --random=NUM1,NUM2,...\n");
+}
 
+$servers = (int)$options['servers'];
+$capacity = (int)$options['capacity'];
+$arrivalRange = [(float)$options['arrival_min'], (float)$options['arrival_max']];
+$serviceRange = [(float)$options['service_min'], (float)$options['service_max']];
+if(isset($options['random'])){
+    $randomNumbers = array_map('floatval', explode(',', $options['random']));
+} else {
+    $randomNumbers = [];
+    for ($i = 0; $i < 100000; $i++) {
+        $randomNumbers[] = mt_rand() / mt_getrandmax(); 
+    }
+}
 
-$randomNumbers = [0.8, 0.7, 0.8, 0.6, 0.2, 0.5];
+$simulator = new QueueSimulator($servers, $capacity, $arrivalRange, $serviceRange, $randomNumbers);
+$simulator->simulate();
 
-$simulatorCafe = new QueueSimulator(2, 5, [2.0, 5.0], [3.0, 5], $randomNumbers);
-$simulatorCafe->simulate();
-echo "Fila G/G/2/5 - Cafeteria B: \n";
-print_r($simulatorCafe->statePercentages());
+echo "===== RELATÓRIO DA SIMULAÇÃO =====\n\n";
+
+$report = $simulator->stateReport();
+
+echo "Estado | Tempo acumulado | Probabilidade\n";
+foreach ($report['states'] as $state => $data) {
+    echo str_pad($state, 6, ' ', STR_PAD_BOTH) . " | " . 
+         str_pad(number_format($data['time'], 4), 15, ' ', STR_PAD_BOTH) . " | " .
+         str_pad(number_format($data['percentage'], 2)."%", 14, ' ', STR_PAD_BOTH) . "\n";
+}
+
+echo "\nNúmero de clientes perdidos: {$report['losses']}\n";
+echo "Tempo global da simulação: {$report['total_time']} minutos\n";
