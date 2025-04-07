@@ -1,27 +1,29 @@
 <?php
 
-class DynamicTandemQueueSimulator {
-    private $queues;
+class QueueSimulator {
+    private $servers;
+    private $capacity;
     private $arrivalRange;
+    private $serviceRange;
     private $randomNumbers;
     private $randIndex = 0;
     private $time = 0;
+    private $queue = [];
+    private $stateDurations = [];
     private $losses = 0;
 
-    public function __construct($queues, $arrivalRange, $randomNumbers) {
-        $this->queues = $queues;
-        foreach ($this->queues as &$queue) {
-            $queue['queue'] = [];
-            $queue['stateDurations'] = [];
-            $queue['serviceTimes'] = [];
-            $queue['serversBusy'] = 0;
-        }
+    public function __construct($servers, $capacity, $arrivalRange, $serviceRange, $randomNumbers) {
+        $this->servers = $servers;
+        $this->capacity = $capacity;
         $this->arrivalRange = $arrivalRange;
+        $this->serviceRange = $serviceRange;
         $this->randomNumbers = $randomNumbers;
     }
 
     private function nextRandom() {
-        return $this->randomNumbers[$this->randIndex++ % count($this->randomNumbers)];
+        $rnd = $this->randomNumbers[$this->randIndex];
+        $this->randIndex++;
+        return $rnd;
     }
 
     private function getTime($range) {
@@ -29,83 +31,100 @@ class DynamicTandemQueueSimulator {
     }
 
     public function simulate() {
+        $this->time = 0;
         $arrivalTime = 1.0;
+        $serviceTimes = [];
+        $serversBusy = 0;
 
         while ($this->randIndex < count($this->randomNumbers)) {
-            $nextEvents = [$arrivalTime];
-            foreach ($this->queues as &$q) {
-                if (!empty($q['serviceTimes'])) {
-                    $nextEvents[] = min($q['serviceTimes']);
-                }
-            }
+            $nextService = count($serviceTimes) > 0 ? min($serviceTimes) : PHP_INT_MAX;
+            $nextEvent = min($arrivalTime, $nextService);
 
-            $nextEvent = min($nextEvents);
             $duration = $nextEvent - $this->time;
-
-            foreach ($this->queues as &$q) {
-                $state = count($q['queue']);
-                $q['stateDurations'][$state] = ($q['stateDurations'][$state] ?? 0) + $duration;
+            $state = count($this->queue);
+            if (!isset($this->stateDurations[$state])) {
+                $this->stateDurations[$state] = 0;
             }
+            $this->stateDurations[$state] += $duration;
 
             $this->time = $nextEvent;
 
             if ($nextEvent == $arrivalTime) {
-                $this->processQueueEntry(0);
-                $arrivalTime = $this->time + $this->getTime($this->arrivalRange);
-            } else {
-                foreach ($this->queues as $idx => &$q) {
-                    if (in_array($nextEvent, $q['serviceTimes'])) {
-                        array_shift($q['queue']);
-                        $q['serversBusy']--;
-                        array_shift($q['serviceTimes']);
-                        if (isset($this->queues[$idx + 1])) {
-                            $this->processQueueEntry($idx + 1);
-                        }
-                        break;
+                if (count($this->queue) < $this->capacity) {
+                    $this->queue[] = $this->time;
+                    if ($serversBusy < $this->servers) {
+                        $serviceTimes[] = $this->time + $this->getTime($this->serviceRange);
+                        $serversBusy++;
                     }
+                } else {
+                    $this->losses++;
+                }
+                if ($this->randIndex < count($this->randomNumbers)) {
+                    $arrivalTime = $this->time + $this->getTime($this->arrivalRange);
+                }
+            } else {
+                array_shift($this->queue);
+                $serversBusy--;
+                array_shift($serviceTimes);
+                if (count($this->queue) >= $serversBusy + 1 && $serversBusy < $this->servers && $this->randIndex < count($this->randomNumbers)) {
+                    $serviceTimes[] = $this->time + $this->getTime($this->serviceRange);
+                    $serversBusy++;
                 }
             }
         }
     }
 
-    private function processQueueEntry($queueIdx) {
-        $q = &$this->queues[$queueIdx];
-        if (count($q['queue']) < $q['capacity']) {
-            $q['queue'][] = $this->time;
-            if ($q['serversBusy'] < $q['servers']) {
-                $q['serviceTimes'][] = $this->time + $this->getTime($q['serviceRange']);
-                $q['serversBusy']++;
-            }
-        } else {
-            $this->losses++;
+    public function stateReport() {
+        $totalTime = array_sum($this->stateDurations);
+        $percentages = [];
+        foreach ($this->stateDurations as $state => $duration) {
+            $percentages[$state] = [
+                'time' => round($duration, 4),
+                'percentage' => round(($duration / $totalTime) * 100, 2)
+            ];
         }
-    }
+        ksort($percentages);
 
-    public function report() {
-        $report = ['filas' => [], 'clientes_perdidos' => $this->losses, 'tempo_total' => $this->time];
-        foreach ($this->queues as $i => $q) {
-            $report['filas']["Fila_" . ($i + 1)] = $q['stateDurations'];
-        }
-        return $report;
+        return [
+            'states' => $percentages,
+            'losses' => $this->losses,
+            'total_time' => round($totalTime, 4)
+        ];
     }
 }
 
-$options = getopt("", ["queues:", "arrival_min:", "arrival_max:", "random:"]);
+$options = getopt("", ["servers:", "capacity:", "arrival_min:", "arrival_max:", "service_min:", "service_max:", "random:"]);
 
-if (!isset($options['queues'], $options['arrival_min'], $options['arrival_max'])) {
-    exit("Usage: php simulator.php --queues='[{\"servers\":2,\"capacity\":3,\"serviceRange\":[1.0,1.5]}]' --arrival_min=NUM --arrival_max=NUM --random=NUM1,NUM2,...\n");
+if (!isset($options['servers'], $options['capacity'], $options['arrival_min'], $options['arrival_max'], $options['service_min'], $options['service_max'])) {
+    exit("Usage: php simulator.php --servers=NUM --capacity=NUM --arrival_min=NUM --arrival_max=NUM --service_min=NUM --service_max=NUM --random=NUM1,NUM2,...\n");
 }
 
-$queues = json_decode($options['queues'], true);
+$servers = (int)$options['servers'];
+$capacity = (int)$options['capacity'];
 $arrivalRange = [(float)$options['arrival_min'], (float)$options['arrival_max']];
-$randomNumbers = isset($options['random']) ? array_map('floatval', explode(',', $options['random'])) : [];
-
-if (empty($randomNumbers)) {
+$serviceRange = [(float)$options['service_min'], (float)$options['service_max']];
+if(isset($options['random'])){
+    $randomNumbers = array_map('floatval', explode(',', $options['random']));
+} else {
+    $randomNumbers = [];
     for ($i = 0; $i < 100000; $i++) {
-        $randomNumbers[] = mt_rand() / mt_getrandmax();
+        $randomNumbers[] = mt_rand() / mt_getrandmax(); 
     }
 }
 
-$simulator = new DynamicTandemQueueSimulator($queues, $arrivalRange, $randomNumbers);
+$simulator = new QueueSimulator($servers, $capacity, $arrivalRange, $serviceRange, $randomNumbers);
 $simulator->simulate();
-print_r($simulator->report());
+
+echo "===== RELATÓRIO DA SIMULAÇÃO =====\n\n";
+
+$report = $simulator->stateReport();
+
+echo "Estado | Tempo acumulado | Probabilidade\n";
+foreach ($report['states'] as $state => $data) {
+    echo str_pad($state, 6, ' ', STR_PAD_BOTH) . " | " . 
+         str_pad(number_format($data['time'], 4), 15, ' ', STR_PAD_BOTH) . " | " .
+         str_pad(number_format($data['percentage'], 2)."%", 14, ' ', STR_PAD_BOTH) . "\n";
+}
+
+echo "\nNúmero de clientes perdidos: {$report['losses']}\n";
+echo "Tempo global da simulação: {$report['total_time']} minutos\n";
