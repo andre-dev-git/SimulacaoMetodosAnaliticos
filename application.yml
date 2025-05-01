@@ -1,0 +1,49 @@
+numeros-aleatorios: 100000
+semente: 1
+
+filas:
+  - id: 0
+    servidores: 1
+    capacidade: -1
+    chegada-inicial: 2.0
+    chegada-minima: 2.0
+    chegada-maxima: 4.0
+    saida-minima: 1.0
+    saida-maxima: 2.0
+
+  - id: 1                
+    servidores: 2
+    capacidade: 5
+    chegada-inicial: -1.0
+    chegada-minima: -1.0
+    chegada-maxima: -1.0
+    saida-minima: 4.0
+    saida-maxima: 8.0
+
+  - id: 2
+    servidores: 2
+    capacidade: 10
+    chegada-inicial: -1.0
+    chegada-minima: -1.0
+    chegada-maxima: -1.0
+    saida-minima: 5.0
+    saida-maxima: 15.0
+
+redes:
+  - origem: 0
+    destino: 1
+    probabilidade: 0.8
+  - origem: 0
+    destino: 2
+    probabilidade: 0.2
+
+  - origem: 1
+    destino: 0
+    probabilidade: 0.3
+  - origem: 1
+    destino: 2
+    probabilidade: 0.5
+
+  - origem: 2
+    destino: 1
+    probabilidade: 0.7
